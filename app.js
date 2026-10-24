@@ -569,7 +569,7 @@
       <div class="trust-columns">
         <article class="content-card trust-card"><h2 class="section-title">Report lifecycle & verification</h2><ul class="trust-list"><li><strong>Reported:</strong> a user-submitted concern; it is not independently confirmed.</li><li><strong>Acknowledged / In Progress:</strong> demo operator notes only; no authority action is asserted.</li><li><strong>Resolution Submitted:</strong> an operator claim with separate before/after evidence fields; evidence remains submitted, not reviewed.</li><li><strong>Verification Pending:</strong> the claim awaits an eligible reviewer. This frontend-only prototype cannot authenticate reviewer eligibility.</li><li><strong>Verified Resolved:</strong> the canonical status, resolution evidence reference, decision criteria and recorded decision must all be present. The current counted records are explicitly simulated samples, not genuine verified outcomes.</li><li><strong>Resolution Disputed:</strong> a concern was raised; the record is not treated as resolved.</li></ul><p>Simulated sample decisions do not display reviewer names or verification timestamps. Such details appear only when provided by a real authorized data source.</p></article>
         <article class="content-card trust-card"><h2 class="section-title">Source, location & evidence</h2><p>Each report is labeled <strong>SAMPLE · demo data</strong> or <strong>User-submitted · local browser record</strong>. Location is reporter-provided and unverified. Uploaded images are not inspected by the screening model and any report with an image is held for a human review that this prototype cannot perform.</p><p><strong>Current local records:</strong> ${sampleCount} fictional workflow samples, ${submittedCount} user submissions, ${approvedCount} eligible for this local dashboard, and ${heldCount} not listed publicly. There are no external report records or government services. JanPramaan is independent and is not an official government portal.</p><p>Education fee reports are allegations. Traffic reports may record time, impact and a supporting source. A report is not evidence of who caused a disruption. Missing photos do not automatically make a complaint false.</p></article>
-        <article class="content-card trust-card"><h2 class="section-title">Identity & privacy</h2><p>There are no secure accounts or shared report database. Reports and uploaded photos stay in this browser's local storage and remain accessible to anyone using the same browser profile until browser data is cleared. There is no automatic retention schedule, backup, access control, or secure deletion service. The optional Gemma API receives only the title, description, and locality after you request an analysis; Google may process these under the applicable API terms.</p><p>Only a chosen public display name is saved when you select it. Pseudonyms are generated locally. Anonymous mode does not collect or display a name or email, but cannot promise technical untraceability: browser and network providers may keep their own records. Do not include identifying details in report text or photos, especially in optional AI requests.</p><p>Photo processing re-encodes images in the browser to remove common embedded metadata; this is best-effort, not a forensic privacy guarantee. Do not upload faces, identity documents, or private medical records.</p><button class="button button-secondary" type="button" id="account-info">Account sign-in prototype</button><p class="fine-print">No credentials are requested or stored. Secure account management is not connected.</p></article>
+        <article class="content-card trust-card"><h2 class="section-title">Identity & privacy</h2><p>There are no secure accounts or shared report database. Reports and uploaded photos stay in this browser's local storage and remain accessible to anyone using the same browser profile until browser data is cleared. There is no automatic retention schedule, backup, access control, or secure deletion service. If you request analysis, only the title, description, and locality are sent to the configured local Ollama service on this computer.</p><p>Only a chosen public display name is saved when you select it. Pseudonyms are generated locally. Anonymous mode does not collect or display a name or email, but cannot promise technical untraceability: browser and network providers may keep their own records. Do not include identifying details in report text or photos, especially in optional AI requests.</p><p>Photo processing re-encodes images in the browser to remove common embedded metadata; this is best-effort, not a forensic privacy guarantee. Do not upload faces, identity documents, or private medical records.</p><button class="button button-secondary" type="button" id="account-info">Account sign-in prototype</button><p class="fine-print">No credentials are requested or stored. Secure account management is not connected.</p></article>
         <article class="content-card trust-card"><h2 class="section-title">AI-assisted complaint screening</h2><p>New submissions are screened by the local Ollama model <strong>hackathon-agent</strong> and validated by server-side rules. The preliminary result is not a fact check, human moderation, or resolution verification. Only reports passing the local policy appear on the dashboard; held, unclear, and out-of-scope submissions remain in the reporter's local submissions view.</p><p>The local service stores complaint text and screening records separately in SQLite on this computer. It does not store uploaded image bytes or publish reports to other users. This prototype has no accounts, reviewer console, encrypted private storage, remote moderation, or access-controlled hosting. A reviewer required by the policy cannot act here, so held reports remain held.</p><p>Corrections and appeals are tied to a private receipt kept in this browser. Repeated identical text is held for review. Rate limits are local and in-memory; they are not production abuse protection.</p></article>
       </div>`;
   }
@@ -582,14 +582,14 @@
         <h2 class="form-section-heading">Report details</h2><div id="duplicate-message"></div><div id="form-error-summary" class="form-error-summary" tabindex="-1" role="alert" hidden></div>
         <div class="field" data-field="title"><label for="report-title">Short title</label><input id="report-title" name="title" maxlength="100" placeholder="Describe the concern, not who you blame" required aria-describedby="title-error"><p class="field-error" id="title-error">Enter a clear title between 8 and 100 characters.</p></div>
         <div class="field" data-field="description"><label for="report-description">What happened?</label><textarea id="report-description" name="description" maxlength="1500" placeholder="Describe the issue, observed impact, and useful context. Avoid unsupported accusations or personal details." required aria-describedby="description-error"></textarea><p class="field-error" id="description-error">Add at least 20 characters describing the concern.</p></div>
-        <div class="field" data-field="category"><label for="report-category">Category</label><select id="report-category" name="category" required aria-describedby="category-error"><option value="">Choose a category</option>${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("")}</select><p class="field-error" id="category-error">Choose the category that best fits.</p></div>
-        <div class="field" data-field="topic"><label for="report-topic">Issue type</label><select id="report-topic" name="topic" required aria-describedby="topic-error"><option value="">Choose a category first</option></select><p class="field-error" id="topic-error">Choose the issue type that best fits.</p></div>
+        <div class="field" data-field="category"><label for="report-category">Category <span id="category-ai-suggested" class="ai-suggested-label" hidden>AI suggested</span></label><select id="report-category" name="category" required aria-describedby="category-error"><option value="">Choose a category</option>${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("")}</select><p class="field-error" id="category-error">Choose the category that best fits.</p></div>
+        <div class="field" data-field="topic"><label for="report-topic">Issue type <span id="topic-ai-suggested" class="ai-suggested-label" hidden>AI suggested</span></label><select id="report-topic" name="topic" required aria-describedby="topic-error"><option value="">Choose a category first</option></select><p class="field-error" id="topic-error">Choose the issue type that best fits.</p></div>
         <div id="fee-fields" class="conditional-fields" hidden><div class="field" data-field="allegation"><label for="report-allegation">Describe the fee concern as an allegation</label><textarea id="report-allegation" maxlength="800" placeholder="What charge changed, when, and what explanation was provided? Do not name students or share private account details."></textarea><p class="field-hint">A report is the reporter's allegation, not verified evidence. Do not identify a school or person without reliable documentation.</p><p class="field-error" id="allegation-error">Describe the concern without personal or unsupported identifying claims.</p></div><div class="field"><label for="fee-evidence">Supporting source or evidence description <span class="optional">(optional)</span></label><input id="fee-evidence" maxlength="250" placeholder="For example, a public notice (do not upload student records)"></div></div>
         <div id="traffic-fields" class="conditional-fields" hidden><div class="field" data-field="traffic-time"><label for="traffic-time">When did it occur?</label><input id="traffic-time" type="datetime-local"><p class="field-error" id="traffic-time-error">Add the approximate time or mark it unknown.</p><label class="check-field"><input id="traffic-time-unknown" type="checkbox"> Time unknown</label></div><div class="field" data-field="traffic-impact"><label for="traffic-impact">Reported impact</label><textarea id="traffic-impact" maxlength="500" placeholder="Describe observed delay, access issue, or diversion; avoid guessing the cause."></textarea><p class="field-error" id="traffic-impact-error">Describe the reported impact.</p></div><div class="field"><label for="traffic-source">Available supporting source <span class="optional">(optional)</span></label><input id="traffic-source" maxlength="250" placeholder="Public advisory, transit notice, or other source; do not speculate about individuals"></div></div>
         <div class="field" data-field="location"><label for="report-location">Bhopal locality</label><select id="report-location" name="location" required aria-describedby="location-error"><option value="">Choose a locality</option>${localities.map((locality) => `<option value="${escapeHtml(locality)}">${escapeHtml(locality)}</option>`).join("")}<option value="__manual">Enter locality manually</option></select><p class="field-error" id="location-error">Choose a locality or enter one manually below.</p></div>
         <div class="field" data-field="location-text"><label for="report-location-text">Street, landmark, or manual locality <span class="optional" id="location-text-optional">(optional)</span></label><input id="report-location-text" maxlength="120" placeholder="Type a landmark or, for manual entry, the locality name"><p class="field-hint">Typed location only. No GPS access; location is not verified. Never add a private home address.</p><p class="field-error" id="location-text-error">Enter the manual locality or keep location text under 120 characters.</p></div>
         <div class="field"><label for="evidence-context">Evidence or source context <span class="optional">(optional)</span></label><textarea id="evidence-context" maxlength="500" placeholder="Describe what any attached image or public source shows. The model cannot view uploaded image contents."></textarea><p class="field-hint">Text-only consistency screening; do not include private records or personal contact details.</p></div>
-        <section class="ai-assist-panel" aria-labelledby="ai-assist-title"><div><h3 id="ai-assist-title">Optional Gemma issue analysis</h3><p>On request, this sends the title, description, and locality above to Google’s configured Gemma API for an advisory suggestion. Google may process these fields under the applicable API terms. Do not include private or identifying information. It does not submit the report, change its status, or verify evidence.</p></div><button class="button button-secondary" type="button" id="analyze-issue">Analyze with Gemma</button><div id="ai-analysis-result" class="ai-analysis-result" role="status" aria-live="polite" hidden></div></section>
+        <section class="ai-assist-panel" aria-labelledby="ai-assist-title"><div><h3 id="ai-assist-title">AI-assisted issue analysis</h3><p>Analyze the title, description, and locality with the Gemma-family model configured in local Ollama. A valid suggestion will fill Category and Issue Type; you can change either. The analysis is preliminary, never verifies a claim, and does not replace screening during submission.</p></div><button class="button button-primary analyze-button" type="button" id="analyze-issue"><span class="analyze-button-label">Analyse Issue</span></button><div id="ai-analysis-result" class="ai-analysis-result" role="status" aria-live="polite" hidden></div></section>
         <fieldset class="identity-choice"><legend>How should your report be attributed publicly?</legend>
           <label><input type="radio" name="identity-choice" value="display-name" checked><span><strong>Display my chosen name</strong><small>Only the name you enter below is shown on this report.</small></span></label>
           <label><input type="radio" name="identity-choice" value="pseudonym"><span><strong>Use a pseudonym</strong><small>A local pseudonym is generated; no email or account is requested.</small></span></label>
@@ -1022,50 +1022,141 @@
   function attachReportForm(form) {
     const analyzeButton = document.getElementById("analyze-issue");
     const analysisResult = document.getElementById("ai-analysis-result");
-    analyzeButton?.addEventListener("click", async () => {
-      const title = document.getElementById("report-title").value.trim();
-      const description = document.getElementById("report-description").value.trim();
+    const categorySelect = document.getElementById("report-category");
+    const topicSelect = document.getElementById("report-topic");
+    const categorySuggestion = document.getElementById("category-ai-suggested");
+    const topicSuggestion = document.getElementById("topic-ai-suggested");
+    let lastAnalysisSignature = "";
+    let analysisInFlight = false;
+    const currentAnalysisInput = () => {
       const selectedLocality = document.getElementById("report-location").value;
-      const locality = selectedLocality === "__manual"
-        ? document.getElementById("report-location-text").value.trim()
-        : selectedLocality;
+      return {
+        title: document.getElementById("report-title").value.trim(),
+        description: document.getElementById("report-description").value.trim(),
+        locality: selectedLocality === "__manual"
+          ? document.getElementById("report-location-text").value.trim()
+          : selectedLocality
+      };
+    };
+    const signatureFor = (input) => JSON.stringify([input.title, input.description, input.locality]);
+    const markAnalysisStaleIfNeeded = () => {
+      if (!lastAnalysisSignature || signatureFor(currentAnalysisInput()) === lastAnalysisSignature) return;
+      analysisResult.dataset.state = "stale";
+      analysisResult.textContent = "The complaint text or locality changed after analysis. Analyse it again before submitting.";
       analysisResult.hidden = false;
-      analysisResult.textContent = "";
-      if (title.length < 8 || description.length < 20 || locality.length < 2) {
+      categorySuggestion.hidden = true;
+      topicSuggestion.hidden = true;
+    };
+
+    ["report-title", "report-description", "report-location-text"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", markAnalysisStaleIfNeeded);
+    });
+    document.getElementById("report-location").addEventListener("change", markAnalysisStaleIfNeeded);
+    categorySelect.addEventListener("change", () => {
+      categorySuggestion.hidden = true;
+      topicSuggestion.hidden = true;
+    });
+    topicSelect.addEventListener("change", () => {
+      topicSuggestion.hidden = true;
+    });
+
+    analyzeButton?.addEventListener("click", async () => {
+      if (analysisInFlight) return;
+      const issue = currentAnalysisInput();
+      analysisResult.hidden = false;
+      analysisResult.dataset.state = "error";
+      if (issue.title.length < 8 || issue.title.length > 100 || issue.description.length < 20 || issue.description.length > 1500 || issue.locality.length < 2) {
         analysisResult.textContent = "Enter a title, description, and locality before requesting analysis.";
         return;
       }
+      analysisInFlight = true;
       analyzeButton.disabled = true;
-      analysisResult.textContent = "Requesting an advisory analysis…";
+      analyzeButton.setAttribute("aria-busy", "true");
+      analyzeButton.innerHTML = '<span class="ai-spinner" aria-hidden="true"></span><span class="analyze-button-label">Analysing issue…</span>';
+      analysisResult.dataset.state = "loading";
+      analysisResult.textContent = "Gemma is preparing an advisory category and issue-type suggestion.";
       try {
         const response = await fetch("/api/analyze-issue", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title, description, locality })
+          body: JSON.stringify(issue),
+          signal: AbortSignal.timeout(90000)
         });
         const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Gemma analysis could not be completed.");
+        if (!response.ok) throw new Error(payload.error || "Local Gemma analysis could not be completed.");
         const analysis = payload.analysis;
+        if (
+          !analysis
+          || typeof analysis.is_civic_issue !== "boolean"
+          || !categories.includes(analysis.category)
+          || !(categoryTopics[analysis.category] || []).includes(analysis.issue_type)
+          || !["relevant", "unclear", "out_of_scope"].includes(analysis.civic_relevance)
+          || typeof analysis.reason !== "string"
+          || !Array.isArray(analysis.missing_information)
+          || !["continue", "request_clarification", "hold_for_review", "block_publication"].includes(analysis.recommended_action)
+          || !["Low", "Medium", "High", "Urgent"].includes(analysis.priority)
+        ) {
+          throw new Error("The analysis response did not match JanPramaan’s supported categories and issue types. No suggestion was applied.");
+        }
+        categorySelect.value = analysis.category;
+        updateReportTopics();
+        topicSelect.value = analysis.issue_type;
+        if (categorySelect.value !== analysis.category || topicSelect.value !== analysis.issue_type) {
+          throw new Error("The suggested category and issue type are not available in this form. No suggestion was applied.");
+        }
+        categorySuggestion.hidden = false;
+        topicSuggestion.hidden = false;
+        lastAnalysisSignature = signatureFor(issue);
+        analysisResult.dataset.state = analysis.civic_relevance === "out_of_scope" ? "error" : "success";
         const heading = document.createElement("strong");
-        heading.textContent = `${analysis.category} · ${analysis.priority} priority (advisory)`;
-        const summary = document.createElement("p");
-        summary.textContent = analysis.summary;
-        const recommendation = document.createElement("p");
-        recommendation.textContent = `Suggested next step: ${analysis.recommended_action}`;
-        analysisResult.replaceChildren(heading, summary, recommendation);
+        heading.textContent = `AI suggested: ${analysis.category} · ${analysis.issue_type} · ${analysis.priority} priority (advisory)`;
+        const reason = document.createElement("p");
+        reason.textContent = analysis.reason;
+        const relevance = document.createElement("p");
+        relevance.textContent = `Civic relevance: ${analysis.civic_relevance}. Suggested action: ${analysis.recommended_action.replaceAll("_", " ")}.`;
+        analysisResult.replaceChildren(heading, reason, relevance);
+        if (analysis.missing_information.length) {
+          const missing = document.createElement("p");
+          missing.textContent = `Clarification suggested: ${analysis.missing_information.join("; ")}`;
+          analysisResult.append(missing);
+        }
+        if (analysis.civic_relevance === "out_of_scope") {
+          const warning = document.createElement("p");
+          warning.textContent = "This appears outside the supported civic scope. It will not be published unless a fresh screening finds a supported civic issue; you can edit the report or request review.";
+          analysisResult.append(warning);
+        }
       } catch (error) {
         const failedToConnect = error instanceof TypeError || error.message === "Failed to fetch";
+        analysisResult.dataset.state = "error";
         analysisResult.textContent = failedToConnect
           ? `Cannot reach the JanPramaan API at ${new URL("/api/analyze-issue", window.location.href).href}. Start the Python backend with "python server.py" and open the site from the backend URL in README; Live Server and file:// do not provide this API.`
-          : error.message || "Gemma analysis could not be completed.";
+          : error.message || "Local Gemma analysis could not be completed. Your form values were not replaced.";
       } finally {
+        analysisInFlight = false;
         analyzeButton.disabled = false;
+        analyzeButton.removeAttribute("aria-busy");
+        analyzeButton.innerHTML = '<span class="analyze-button-label">Analyse Issue</span>';
       }
     });
     bindImageInput("report-photo", "photo-preview", (value) => { pendingPhoto = value; }, form);
     bindImageInput("report-before-evidence", "before-preview", (value) => { pendingBeforeEvidence = value; }, form);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      markAnalysisStaleIfNeeded();
+      if (analysisInFlight) {
+        analysisResult.hidden = false;
+        analysisResult.dataset.state = "loading";
+        analysisResult.textContent = "Wait for issue analysis to finish before submitting.";
+        analyzeButton.focus();
+        return;
+      }
+      if (lastAnalysisSignature && signatureFor(currentAnalysisInput()) !== lastAnalysisSignature) {
+        analysisResult.hidden = false;
+        analysisResult.dataset.state = "stale";
+        analysisResult.textContent = "Your complaint changed after analysis. Analyse it again before submitting.";
+        analyzeButton.focus();
+        return;
+      }
       const title = document.getElementById("report-title").value.trim();
       const description = document.getElementById("report-description").value.trim();
       const category = document.getElementById("report-category").value;

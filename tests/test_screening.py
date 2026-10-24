@@ -1,5 +1,7 @@
 import base64
+import ast
 import json
+import re
 import tempfile
 import threading
 import unittest
@@ -14,12 +16,15 @@ from PIL import Image
 import server
 from screening import (
     RequestRateLimiter,
+    CATEGORY_TOPICS,
     ScreeningError,
     ScreeningStore,
     _data_url_info,
+    apply_obvious_scope_rules,
     classify_publication,
     screen_complaint,
     validate_complaint,
+    validate_analysis_result,
     validate_screening_result,
 )
 
@@ -39,6 +44,20 @@ def screening_result(**changes):
     return result | changes
 
 
+def analysis_result(**changes):
+    result = {
+        "is_civic_issue": True,
+        "category": "Roads and infrastructure",
+        "issue_type": "Pothole",
+        "civic_relevance": "relevant",
+        "reason": "A pothole affects public road infrastructure.",
+        "missing_information": [],
+        "recommended_action": "continue",
+        "priority": "Medium",
+    }
+    return result | changes
+
+
 def complaint_payload(**changes):
     return {
         "title": "Pothole on public road",
@@ -50,6 +69,31 @@ def complaint_payload(**changes):
 
 
 class ScreeningValidationTests(unittest.TestCase):
+    def test_analysis_schema_enforces_category_and_matching_issue_type(self):
+        self.assertEqual(validate_analysis_result(analysis_result())["issue_type"], "Pothole")
+        with self.assertRaises(ScreeningError):
+            validate_analysis_result(analysis_result(issue_type="Hospital service"))
+        with self.assertRaises(ScreeningError):
+            validate_analysis_result(analysis_result(is_civic_issue="true"))
+        with self.assertRaises(ScreeningError):
+            validate_analysis_result(
+                analysis_result(civic_relevance="out_of_scope", recommended_action="continue")
+            )
+
+    def test_backend_categories_and_topics_match_existing_report_form(self):
+        frontend = (Path(server.ROOT) / "app.js").read_text(encoding="utf-8")
+        categories_match = re.search(r"const categories = (\[.*?\]);", frontend, re.DOTALL)
+        topics_match = re.search(r"const categoryTopics = (\{.*?\n  \});", frontend, re.DOTALL)
+        self.assertIsNotNone(categories_match)
+        self.assertIsNotNone(topics_match)
+        form_categories = ast.literal_eval(categories_match.group(1))
+        form_topics = ast.literal_eval(topics_match.group(1))
+        self.assertEqual(form_categories, list(CATEGORY_TOPICS))
+        self.assertEqual(
+            {category: set(topics) for category, topics in form_topics.items()},
+            CATEGORY_TOPICS,
+        )
+
     def test_text_only_civic_report_is_valid(self):
         complaint, uploads = validate_complaint(complaint_payload())
         self.assertEqual(complaint["topic"], "Pothole")
@@ -122,6 +166,48 @@ class PublicationPolicyTests(unittest.TestCase):
             ("rejected_out_of_scope", False),
         )
 
+    def test_private_neighbour_dispute_is_rejected_but_institutional_claim_is_not(self):
+        private_report = apply_obvious_scope_rules(
+            {
+                "title": "Disagreement with my neighbour",
+                "description": "My neighbour and I disagree about a private boundary.",
+            },
+            screening_result(
+                civic_relevance="unclear",
+                suspected_personal_dispute=True,
+                recommended_action="hold_for_moderation",
+            ),
+        )
+        self.assertEqual(private_report["civic_relevance"], "out_of_scope")
+        self.assertEqual(private_report["recommended_action"], "reject_as_out_of_scope")
+
+        hospital_report = apply_obvious_scope_rules(
+            {
+                "title": "Alleged hospital overcharging",
+                "description": "A hospital visit included unexplained charges. This is an allegation about a healthcare service.",
+            },
+            screening_result(),
+        )
+        self.assertEqual(hospital_report["civic_relevance"], "relevant")
+
+    def test_obvious_advertisement_is_kept_out_of_publication(self):
+        assessment = apply_obvious_scope_rules(
+            {
+                "title": "Claim a free prize now",
+                "description": "Click here to claim a free prize.",
+            },
+            screening_result(civic_relevance="unclear"),
+        )
+        self.assertEqual(assessment["civic_relevance"], "out_of_scope")
+        self.assertEqual(assessment["recommended_action"], "reject_as_out_of_scope")
+        self.assertEqual(
+            classify_publication(
+                assessment,
+                {"photo": {"provided": False}, "beforeEvidence": {"provided": False}},
+            ),
+            ("rejected_out_of_scope", False),
+        )
+
     def test_spam_sensitive_mismatch_and_media_require_review(self):
         no_media = {"photo": {"provided": False}, "beforeEvidence": {"provided": False}}
         for flags in (
@@ -149,12 +235,15 @@ class PublicationPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             store = ScreeningStore(Path(folder) / "screening.sqlite3")
             complaint, uploads = validate_complaint(complaint_payload())
+            complaint["before_evidence_present"] = True
+            uploads["beforeEvidence"]["provided"] = True
             store.store_screening(complaint, screening_result(), "approved_for_publication", False, "test")
             with patch("screening.screen_with_ollama", side_effect=AssertionError("duplicate must not call model")):
                 assessment, status, review = screen_complaint(complaint, uploads, store)
         self.assertEqual(status, "held_for_moderation")
         self.assertTrue(review)
         self.assertTrue(assessment["potential_spam"])
+        self.assertEqual(assessment["evidence_status"], "provided")
 
     def test_correction_requires_receipt_and_is_stored_separately(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -231,6 +320,21 @@ class ScreeningApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn(b"Title must be between", body)
         screen.assert_not_called()
+
+    def test_ollama_failure_does_not_store_or_accept_submission(self):
+        with patch(
+            "server.screen_complaint",
+            side_effect=ScreeningError("Local Ollama is unavailable.", 503),
+        ):
+            status, body = self.request(
+                "POST",
+                "/api/submit-complaint",
+                complaint_payload(),
+            )
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(body), {"error": "Local Ollama is unavailable."})
+        with self.store._connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM complaints").fetchone()[0], 0)
 
     def test_submission_and_receipt_protected_correction_route(self):
         with patch(

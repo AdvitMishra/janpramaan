@@ -6,9 +6,6 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from gemma_service import MODEL_NAME, GemmaServiceError, analyze_issue
-
-
 ROOT = Path(__file__).resolve().parent
 MAX_REQUEST_BYTES = 16_384
 MAX_SCREENING_REQUEST_BYTES = 12 * 1024 * 1024
@@ -19,7 +16,7 @@ def load_local_settings():
     if not env_path.is_file():
         return
 
-    supported_settings = {"GOOGLE_API_KEY", "OLLAMA_MODEL", "JANPRAMAAN_HOST", "JANPRAMAAN_PORT"}
+    supported_settings = {"OLLAMA_MODEL", "JANPRAMAAN_HOST", "JANPRAMAAN_PORT"}
     for line in env_path.read_text(encoding="utf-8").splitlines():
         key, separator, value = line.partition("=")
         key = key.strip()
@@ -38,6 +35,7 @@ from screening import (
     RequestRateLimiter,
     ScreeningError,
     ScreeningStore,
+    analyze_civic_issue,
     clean_correction,
     ollama_model_available,
     public_screening_summary,
@@ -105,11 +103,10 @@ class JanPramaanHandler(SimpleHTTPRequestHandler):
                 {
                     "status": "ok",
                     "service": "JanPramaan API",
-                    "model": MODEL_NAME,
+                    "model": OLLAMA_MODEL,
                     "screening_model": OLLAMA_MODEL,
                     "screening_endpoint": "/api/submit-complaint",
                     "ollama_available": ollama_model_available(),
-                    "api_key_configured": bool(os.getenv("GOOGLE_API_KEY", "").strip()),
                 },
             )
             return
@@ -127,41 +124,26 @@ class JanPramaanHandler(SimpleHTTPRequestHandler):
         if correction_match:
             self._handle_correction(correction_match.group(1))
             return
-        if route != "/api/analyze-issue":
-            self._send_json(404, {"error": "API route not found."})
+        if route == "/api/analyze-issue":
+            self._handle_issue_analysis()
             return
-        if self.headers.get_content_type() != "application/json":
-            self._send_json(415, {"error": "Content-Type must be application/json."})
-            return
+        self._send_json(404, {"error": "API route not found."})
 
-        try:
-            content_length = int(self.headers.get("Content-Length", ""))
-        except ValueError:
-            self._send_json(400, {"error": "A valid Content-Length header is required."})
+    def _handle_issue_analysis(self):
+        if not self._allow_screening_request():
             return
-        if content_length < 1 or content_length > MAX_REQUEST_BYTES:
-            self._send_json(413, {"error": "Request body must be between 1 and 16384 bytes."})
+        payload = self._read_json_body(MAX_REQUEST_BYTES)
+        if payload is None:
             return
-
-        try:
-            payload = json.loads(self.rfile.read(content_length))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            self._send_json(400, {"error": "Request body must contain valid JSON."})
-            return
-
         try:
             issue = validate_issue_payload(payload)
+            result = analyze_civic_issue(issue)
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
             return
-
-        try:
-            result = analyze_issue(**issue)
-        except GemmaServiceError as exc:
-            status = 503 if "not configured" in str(exc) or "dependencies are missing" in str(exc) else 502
-            self._send_json(status, {"error": str(exc)})
+        except ScreeningError as exc:
+            self._send_json(exc.status_code, {"error": str(exc)})
             return
-
         self._send_json(200, {"analysis": result, "advisory_only": True})
 
     def _read_json_body(self, max_bytes: int):
@@ -298,7 +280,7 @@ def main():
     port = int(os.getenv("JANPRAMAAN_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), JanPramaanHandler)
     print(f"JanPramaan running at http://{host}:{port}")
-    print(f"Gemma model configured: {bool(os.getenv('GOOGLE_API_KEY', '').strip())}")
+    print(f"Local Gemma screening model: {OLLAMA_MODEL}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

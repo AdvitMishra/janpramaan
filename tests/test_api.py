@@ -1,10 +1,12 @@
 import json
-import os
 import threading
 import unittest
 from http.client import HTTPConnection
+from pathlib import Path
 from unittest.mock import patch
 
+import server
+from screening import ScreeningError
 from server import JanPramaanHandler
 from http.server import ThreadingHTTPServer
 from gemma_service import GemmaServiceError, validate_analysis_result
@@ -41,8 +43,9 @@ class ApiTests(unittest.TestCase):
         payload = json.loads(body)
         self.assertEqual(status, 200)
         self.assertEqual(payload["status"], "ok")
-        self.assertEqual(payload["model"], "gemma-4-26b-a4b-it")
+        self.assertEqual(payload["model"], payload["screening_model"])
         self.assertNotIn("GOOGLE_API_KEY", payload)
+        self.assertNotIn("api_key_configured", payload)
 
     def test_invalid_issue_request_is_rejected_before_model_call(self):
         status, body = self.request(
@@ -53,8 +56,43 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("Title must be between", json.loads(body)["error"])
 
-    def test_valid_issue_request_reports_missing_model_configuration(self):
-        with patch.dict(os.environ, {"GOOGLE_API_KEY": ""}):
+    def test_analysis_contract_returns_valid_category_and_issue_type(self):
+        result = {
+            "is_civic_issue": True,
+            "category": "Roads and infrastructure",
+            "issue_type": "Pothole",
+            "civic_relevance": "relevant",
+            "reason": "A pothole affects public road infrastructure.",
+            "missing_information": [],
+            "recommended_action": "continue",
+            "priority": "Medium",
+        }
+        with patch("server.analyze_civic_issue", return_value=result) as analyze:
+            status, body = self.request(
+                "POST",
+                "/api/analyze-issue",
+                {
+                    "title": "Pothole near the public market",
+                    "description": "A pothole is affecting vehicles and cyclists near the public market.",
+                    "locality": "Arera Colony",
+                },
+            )
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertTrue(payload["advisory_only"])
+        self.assertEqual(payload["analysis"]["category"], "Roads and infrastructure")
+        self.assertEqual(payload["analysis"]["issue_type"], "Pothole")
+        analyze.assert_called_once_with({
+            "title": "Pothole near the public market",
+            "description": "A pothole is affecting vehicles and cyclists near the public market.",
+            "locality": "Arera Colony",
+        })
+
+    def test_analysis_failure_is_returned_without_fabricated_result(self):
+        with patch(
+            "server.analyze_civic_issue",
+            side_effect=ScreeningError("Local Ollama is unavailable.", 503),
+        ):
             status, body = self.request(
                 "POST",
                 "/api/analyze-issue",
@@ -65,7 +103,15 @@ class ApiTests(unittest.TestCase):
                 },
             )
         self.assertEqual(status, 503)
-        self.assertIn("not configured", json.loads(body)["error"])
+        self.assertEqual(json.loads(body), {"error": "Local Ollama is unavailable."})
+
+    def test_analysis_result_is_applied_to_existing_frontend_controls(self):
+        frontend = (Path(server.ROOT) / "app.js").read_text(encoding="utf-8")
+        self.assertIn('fetch("/api/analyze-issue"', frontend)
+        self.assertIn("categorySelect.value = analysis.category", frontend)
+        self.assertIn("topicSelect.value = analysis.issue_type", frontend)
+        self.assertIn("analysis.category", frontend)
+        self.assertIn("analysis.issue_type", frontend)
 
     def test_root_serves_existing_frontend(self):
         status, body = self.request("GET", "/")

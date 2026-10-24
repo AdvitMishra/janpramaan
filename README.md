@@ -15,10 +15,11 @@ JanPramaan is an independent civic-reporting prototype focused on Bhopal, Madhya
 - Three clearly labeled, fictional sample records demonstrate a simulated Verified Resolved state. They have textual sample evidence references, no uploaded proof, no reviewer identity, and no real verification timestamp. They count toward the verified-resolved demo metric but are never represented as real outcomes.
 - Demo operator updates can move claims into Verification Pending. The unauthenticated simulated reviewer can record a dispute, but cannot verify user submissions. Real user-submitted records cannot become Verified Resolved through this prototype.
 - Trust & Transparency page explains record sources, authority connectivity, privacy, limitations, and moderation policy.
-- Optional Gemma analysis sends only the entered title, description, and locality to the configured Google Gen AI service after the user presses its button. Its category, priority, summary, and suggested action are advisory only and never change report data or status.
-- Python API provides `GET /api/health` and `POST /api/analyze-issue`. The model call uses Google's `google-genai` SDK and requests the exact model ID `gemma-4-26b-a4b-it`; it does not substitute a Gemini model. A configured key does not guarantee that Google currently exposes this exact model through the API key endpoint.
+- **Analyse Issue** sends only the entered title, description, and locality to the configured local Ollama Gemma-family model through `POST /api/analyze-issue`. A schema-validated suggestion fills the form's existing Category and Issue Type fields. The values are checked against the server's allowed category/topic pairs and never establish facts or a resolution.
+- If a citizen edits the title, description, or locality after analysis, the suggestion is marked stale and must be refreshed before submitting. Manual category and issue-type edits remain possible; backend submission screening always runs independently.
+- Python API provides `GET /api/health`, `POST /api/analyze-issue`, and `POST /api/submit-complaint`. Analysis and final submission screening use the configured local Ollama model (`OLLAMA_MODEL`, default `hackathon-agent`); the browser never calls Ollama directly.
 - New report submissions call `POST /api/submit-complaint` on the same origin before being saved in browser storage. The server validates fields and JPEG/PNG/WebP signatures, size, and decoded dimensions, then screens report text with the local Ollama chat API using `OLLAMA_MODEL` (default `hackathon-agent`). Uploaded image bytes are not sent to Ollama; an image attachment requires human review because its contents are not inspected.
-- Model output is validated against a JSON schema. Deterministic publication rules keep reports with sensitive content, a suspected personal dispute, spam, inconsistent evidence, unclear civic relevance, missing required context, or unreviewed media off the dashboard. A repeated identical title/description/locality is held. A missing optional photo alone is not a reason to reject or hold a report.
+- Model output is validated against JSON schemas. Clearly out-of-scope text and obvious private disputes are marked `rejected_out_of_scope`; ambiguous, sensitive, duplicate, spam-flagged, inconsistent, or unreviewed-media cases remain private for clarification or review. Missing optional photos alone do not trigger rejection or a moderation hold.
 - Screening statuses are stored separately from complaint text in a local SQLite database. Passing the configured local policy sets `approved_for_publication`; otherwise the item remains private to the submitter's local browser and appears under **My submissions** with correction/appeal access. A preliminary AI assessment is not a human review or a truth finding.
 
 ## Data, privacy, and limitations
@@ -51,7 +52,7 @@ python -m pip install -r requirements.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Set `OLLAMA_MODEL=hackathon-agent` in the ignored `.env` file (or keep the default). The separate optional Google Gemma analysis button still needs `GOOGLE_API_KEY`; that key is not used by the screening pipeline. Do not place keys in frontend code. Start the combined frontend/API server:
+Set `OLLAMA_MODEL=hackathon-agent` in the ignored `.env` file (or keep the default). The analysis and screening endpoints use this local Ollama model. Do not place API keys in frontend code; the local analysis flow does not require a Google API key. Start the combined frontend/API server:
 
 ```powershell
 python server.py
@@ -69,7 +70,7 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/submit-complaint' -Method Post
 } | ConvertTo-Json)
 ```
 
-If Ollama or the model is unavailable, the endpoint returns a safe service error and does not save a successful submission. The current Google `/api/analyze-issue` endpoint is separate and optional.
+The analysis and submission routes each screen against the local model; submission never trusts an earlier browser analysis. If Ollama is unavailable or returns malformed data, the API reports an error and does not accept a report as screened. The browser keeps the user's unsent form draft so they can retry.
 
 Run the API checks with:
 
