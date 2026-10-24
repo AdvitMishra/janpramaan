@@ -407,6 +407,41 @@
     return issue.sample ? "SAMPLE · demo data" : "User-submitted · browser only";
   }
 
+  function isPubliclyVisible(issue) {
+    return issue.sample === true || issue.screeningStatus === "approved_for_publication";
+  }
+
+  function publicReports() {
+    return issues.filter(isPubliclyVisible);
+  }
+
+  function screeningStatusLabel(status) {
+    const labels = {
+      draft: "Draft",
+      screening: "Screening",
+      needs_clarification: "Needs clarification",
+      pending_review: "Pending review",
+      approved_for_publication: "Approved for this local dashboard",
+      held_for_moderation: "Held for human review",
+      rejected_out_of_scope: "Rejected as out of scope"
+    };
+    return labels[status] || "Screening not completed";
+  }
+
+  function screeningPanelMarkup(issue) {
+    if (!issue.screening) {
+      const message = issue.sample
+        ? "This fictional sample record was not screened and is included only to demonstrate the report interface."
+        : "This older browser record has no screening record and is not listed on the public dashboard. The local prototype has no connected reviewer.";
+      return `<article class="content-card screening-panel"><h2 class="section-title">AI screening</h2><p>${escapeHtml(message)}</p></article>`;
+    }
+    const assessment = issue.screening.assessment || {};
+    const missing = Array.isArray(assessment.missing_information) && assessment.missing_information.length
+      ? `<ul>${assessment.missing_information.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : "<p>No missing information was identified by the preliminary screen.</p>";
+    return `<article class="content-card screening-panel" aria-labelledby="screening-title"><p class="eyebrow">AI-assisted · preliminary · not a human decision</p><h2 class="section-title" id="screening-title">Screening status: ${escapeHtml(screeningStatusLabel(issue.screeningStatus))}</h2><div class="screening-grid"><div><strong>Civic relevance</strong><p>${escapeHtml(assessment.civic_relevance || "Not assessed")}</p></div><div><strong>Evidence status</strong><p>${escapeHtml(assessment.evidence_status || "Not assessed")} · ${escapeHtml(assessment.evidence_consistency || "not assessed")} consistency</p></div><div><strong>Human review</strong><p>${issue.screening.human_review_required ? "Required before publication; no reviewer is connected in this prototype." : "Not required by the local screening policy; no human review is recorded."}</p></div></div><strong>Missing information</strong>${missing}<strong>Screening explanation</strong><p>${escapeHtml(issue.screening.explanation || assessment.explanation || "No explanation provided.")}</p><p class="field-hint">${escapeHtml(issue.screening.evidence_note || "Evidence is user-submitted and not independently verified.")} Screening cannot establish truth, identity, location, or resolution. No authority action is implied.</p>${["needs_clarification", "pending_review", "held_for_moderation", "rejected_out_of_scope"].includes(issue.screeningStatus) ? `<form id="screening-correction-form" data-complaint-id="${escapeHtml(issue.screening.complaint_id || "")}"><div class="field"><label for="screening-correction">Add information or request a review</label><textarea id="screening-correction" maxlength="2000" minlength="10" required placeholder="Add relevant context or explain why you are requesting a review."></textarea></div><button class="button button-secondary" type="submit">Submit correction or appeal</button><p class="field-hint">Your private receipt is stored in this browser. This local prototype has no account system; anyone with access to this browser profile may access it.</p></form>` : ""}</article>`;
+  }
+
   function isVerifiedResolvedRecord(issue) {
     const decision = issue.verificationDecision;
     const after = issue.resolutionEvidence?.after;
@@ -429,16 +464,17 @@
   }
 
   function metricIssues(key) {
-    if (key === "all") return issues;
-    if (key === "open") return issues.filter((issue) => ["reported", "acknowledged"].includes(issue.statusCode));
-    if (key === "progress") return issues.filter((issue) => ["in_progress", "resolution_submitted", "verification_pending"].includes(issue.statusCode));
-    if (key === "verified") return issues.filter(isVerifiedResolvedRecord);
-    return issues;
+    const visible = publicReports();
+    if (key === "all") return visible;
+    if (key === "open") return visible.filter((issue) => ["reported", "acknowledged"].includes(issue.statusCode));
+    if (key === "progress") return visible.filter((issue) => ["in_progress", "resolution_submitted", "verification_pending"].includes(issue.statusCode));
+    if (key === "verified") return visible.filter(isVerifiedResolvedRecord);
+    return visible;
   }
 
   function getFilteredIssues() {
     const query = searchTerm.trim().toLowerCase();
-    const filtered = issues.filter((issue) => {
+    const filtered = publicReports().filter((issue) => {
       const matchesSearch = !query || [issue.title, issue.description, issue.locality, issue.locationText, issue.id, issue.category, issue.topic].some((value) => String(value || "").toLowerCase().includes(query));
       const metricMatch = quickFilter === "all" || metricIssues(quickFilter).some((candidate) => candidate.id === issue.id);
       return matchesSearch && metricMatch
@@ -454,10 +490,11 @@
   }
 
   function dashboardPage() {
+    const visibleReports = publicReports();
     const openCount = metricIssues("open").length;
     const progressCount = metricIssues("progress").length;
     const verifiedCount = metricIssues("verified").length;
-    const simulatedVerifiedCount = issues.filter((issue) => issue.sample && isVerifiedResolvedRecord(issue)).length;
+    const simulatedVerifiedCount = visibleReports.filter((issue) => issue.sample && isVerifiedResolvedRecord(issue)).length;
     const hasFilter = quickFilter !== "all" || categoryFilter !== "all" || statusFilter !== "all" || localityFilter !== "all" || searchTerm;
     return `<section class="page-heading">
       <div><p class="eyebrow">Bhopal, Madhya Pradesh · जनप्रमाण</p><h1>Every Voice. Accountable Action.</h1><p class="page-subtitle">JanPramaan helps Bhopal communities report civic concerns, follow every update, and distinguish submitted claims from simulated demo outcomes.</p></div>
@@ -465,7 +502,7 @@
     </section>
     <div class="sample-note">${icon("info")}<span><strong>Prototype, not a government portal.</strong> SAMPLE · demo records are fictional. New reports stay in this browser and are not sent to Bhopal authorities. Sample verification counts are simulated for demonstration only; no authority system is connected.</span></div>
     <section class="metrics" aria-label="JanPramaan report totals">
-      <button class="metric-card ${quickFilter === "all" ? "metric-selected" : ""}" type="button" data-metric="all" aria-pressed="${quickFilter === "all"}" aria-label="Total reports: ${issues.length}"><span class="metric-top"><span>Total reports</span><span class="metric-icon">${icon("list")}</span></span><span class="metric-value" data-count-target="${issues.length}" aria-hidden="true">${issues.length}</span><span class="metric-caption">Sample + browser-only submissions</span></button>
+      <button class="metric-card ${quickFilter === "all" ? "metric-selected" : ""}" type="button" data-metric="all" aria-pressed="${quickFilter === "all"}" aria-label="Total reports: ${visibleReports.length}"><span class="metric-top"><span>Total reports</span><span class="metric-icon">${icon("list")}</span></span><span class="metric-value" data-count-target="${visibleReports.length}" aria-hidden="true">${visibleReports.length}</span><span class="metric-caption">Labeled samples + screened local submissions</span></button>
       <button class="metric-card ${quickFilter === "open" ? "metric-selected" : ""}" type="button" data-metric="open" aria-pressed="${quickFilter === "open"}" aria-label="Open issues: ${openCount}"><span class="metric-top"><span>Open issues</span><span class="metric-icon">${icon("clock")}</span></span><span class="metric-value" data-count-target="${openCount}" aria-hidden="true">${openCount}</span><span class="metric-caption">Reported or acknowledged</span></button>
       <button class="metric-card ${quickFilter === "progress" ? "metric-selected" : ""}" type="button" data-metric="progress" aria-pressed="${quickFilter === "progress"}" aria-label="In progress: ${progressCount}"><span class="metric-top"><span>In progress</span><span class="metric-icon">${icon("arrow")}</span></span><span class="metric-value" data-count-target="${progressCount}" aria-hidden="true">${progressCount}</span><span class="metric-caption">Work claimed or under review</span></button>
       <button class="metric-card ${quickFilter === "verified" ? "metric-selected" : ""}" type="button" data-metric="verified" aria-pressed="${quickFilter === "verified"}" aria-label="Verified resolved: ${verifiedCount}, including ${simulatedVerifiedCount} simulated sample outcomes and ${Math.max(0, verifiedCount - simulatedVerifiedCount)} real review records"><span class="metric-top"><span>Verified resolved</span><span class="metric-icon">${icon("checkCircle")}</span></span><span class="metric-value" data-count-target="${verifiedCount}" aria-hidden="true">${verifiedCount}</span><span class="metric-caption">${simulatedVerifiedCount} simulated sample outcome(s) · none authority verified</span></button>
@@ -491,7 +528,7 @@
   }
 
   function localityPage() {
-    const bhopalIssues = issues.filter((issue) => issue.city === "Bhopal, Madhya Pradesh");
+    const bhopalIssues = publicReports().filter((issue) => issue.city === "Bhopal, Madhya Pradesh");
     const foundLocalities = new Set(bhopalIssues.map((issue) => issue.locality));
     const localityOptions = [...new Set([...localities, ...foundLocalities])].sort();
     const query = localitySearchTerm.trim().toLowerCase();
@@ -518,6 +555,8 @@
   function trustPage() {
     const sampleCount = issues.filter((issue) => issue.sample).length;
     const submittedCount = issues.length - sampleCount;
+    const approvedCount = publicReports().filter((issue) => !issue.sample).length;
+    const heldCount = issues.filter((issue) => !issue.sample && !isPubliclyVisible(issue)).length;
     const simulatedVerifiedCount = issues.filter((issue) => issue.sample && isVerifiedResolvedRecord(issue)).length;
     const realVerifiedCount = issues.filter((issue) => !issue.sample && isVerifiedResolvedRecord(issue)).length;
     return `<section class="page-heading"><div><p class="eyebrow">Accountability by design</p><h1>Trust & transparency</h1><p class="page-subtitle">Understand where information comes from, who can see it, and what JanPramaan does not claim.</p></div></section>
@@ -529,16 +568,16 @@
       </div>
       <div class="trust-columns">
         <article class="content-card trust-card"><h2 class="section-title">Report lifecycle & verification</h2><ul class="trust-list"><li><strong>Reported:</strong> a user-submitted concern; it is not independently confirmed.</li><li><strong>Acknowledged / In Progress:</strong> demo operator notes only; no authority action is asserted.</li><li><strong>Resolution Submitted:</strong> an operator claim with separate before/after evidence fields; evidence remains submitted, not reviewed.</li><li><strong>Verification Pending:</strong> the claim awaits an eligible reviewer. This frontend-only prototype cannot authenticate reviewer eligibility.</li><li><strong>Verified Resolved:</strong> the canonical status, resolution evidence reference, decision criteria and recorded decision must all be present. The current counted records are explicitly simulated samples, not genuine verified outcomes.</li><li><strong>Resolution Disputed:</strong> a concern was raised; the record is not treated as resolved.</li></ul><p>Simulated sample decisions do not display reviewer names or verification timestamps. Such details appear only when provided by a real authorized data source.</p></article>
-        <article class="content-card trust-card"><h2 class="section-title">Source, location & evidence</h2><p>Each report is labeled <strong>SAMPLE · demo data</strong> or <strong>User-submitted · browser only</strong>. Location is reporter-provided and unverified unless a future connected system supplies an auditable check. Submitted evidence is not independently reviewed.</p><p><strong>Current records:</strong> ${sampleCount} fictional workflow samples and ${submittedCount} locally stored submissions. There are no connected external records or government services. JanPramaan is an independent prototype, not an official government portal.</p><p>Education fee reports are displayed as the reporter's allegation. Keep institution and individual names out unless well supported; uploaded documents should not contain personal student data. Traffic reports ask for time, location, impact, and an optional source. A report is not evidence of who caused a disruption.</p></article>
+        <article class="content-card trust-card"><h2 class="section-title">Source, location & evidence</h2><p>Each report is labeled <strong>SAMPLE · demo data</strong> or <strong>User-submitted · local browser record</strong>. Location is reporter-provided and unverified. Uploaded images are not inspected by the screening model and any report with an image is held for a human review that this prototype cannot perform.</p><p><strong>Current local records:</strong> ${sampleCount} fictional workflow samples, ${submittedCount} user submissions, ${approvedCount} eligible for this local dashboard, and ${heldCount} not listed publicly. There are no external report records or government services. JanPramaan is independent and is not an official government portal.</p><p>Education fee reports are allegations. Traffic reports may record time, impact and a supporting source. A report is not evidence of who caused a disruption. Missing photos do not automatically make a complaint false.</p></article>
         <article class="content-card trust-card"><h2 class="section-title">Identity & privacy</h2><p>There are no secure accounts or shared report database. Reports and uploaded photos stay in this browser's local storage and remain accessible to anyone using the same browser profile until browser data is cleared. There is no automatic retention schedule, backup, access control, or secure deletion service. The optional Gemma API receives only the title, description, and locality after you request an analysis; Google may process these under the applicable API terms.</p><p>Only a chosen public display name is saved when you select it. Pseudonyms are generated locally. Anonymous mode does not collect or display a name or email, but cannot promise technical untraceability: browser and network providers may keep their own records. Do not include identifying details in report text or photos, especially in optional AI requests.</p><p>Photo processing re-encodes images in the browser to remove common embedded metadata; this is best-effort, not a forensic privacy guarantee. Do not upload faces, identity documents, or private medical records.</p><button class="button button-secondary" type="button" id="account-info">Account sign-in prototype</button><p class="fine-print">No credentials are requested or stored. Secure account management is not connected.</p></article>
-        <article class="content-card trust-card"><h2 class="section-title">Corrections, duplicates, disputes & abuse</h2><p>Possible duplicates are suggestions only; they are not auto-merged. Corrections append a visible note and preserve the original report and history. A dispute changes the state to Resolution Disputed and requires review before it can proceed.</p><p>Flagged content is not automatically removed in this prototype. Flags are saved locally and there is no moderator service, secure escalation channel, or response-time commitment. A live service needs trained moderation, appeal handling, audit logs, abuse safeguards, and an explicit retention policy.</p><p>Optional Gemma suggestions are advisory categorization and prioritization only. They are not evidence, do not verify outcomes, and must not decide a report status. The analysis API is not a report-storage service.</p></article>
+        <article class="content-card trust-card"><h2 class="section-title">AI-assisted complaint screening</h2><p>New submissions are screened by the local Ollama model <strong>hackathon-agent</strong> and validated by server-side rules. The preliminary result is not a fact check, human moderation, or resolution verification. Only reports passing the local policy appear on the dashboard; held, unclear, and out-of-scope submissions remain in the reporter's local submissions view.</p><p>The local service stores complaint text and screening records separately in SQLite on this computer. It does not store uploaded image bytes or publish reports to other users. This prototype has no accounts, reviewer console, encrypted private storage, remote moderation, or access-controlled hosting. A reviewer required by the policy cannot act here, so held reports remain held.</p><p>Corrections and appeals are tied to a private receipt kept in this browser. Repeated identical text is held for review. Rate limits are local and in-memory; they are not production abuse protection.</p></article>
       </div>`;
   }
 
   function reportPage() {
     if (reportSubmittedId) return confirmationPage();
     return `<section class="page-heading"><div><p class="eyebrow">Bhopal, Madhya Pradesh</p><h1>Report a civic concern</h1><p class="page-subtitle">Share only the details needed to understand the issue. Choose how your public attribution should appear.</p></div></section>
-      <div class="sample-note">${icon("info")}<span><strong>Prototype disclosure:</strong> this report is stored in the current browser only; it is not sent to an authority or shared to other users. See Trust & Transparency for data visibility and retention limitations.</span></div>
+      <div class="sample-note"><span><strong>Local screening prototype:</strong> Before saving, the title, description, selected category, locality and written evidence context are sent to the Ollama service on this computer. Uploaded images are checked for type and size but are not sent to the model. Screening is preliminary, not human moderation. Reports passing the local policy appear only on this browser's dashboard; there is no shared service or authority connection.</span></div>
       <div class="form-layout"><form id="report-form" class="content-card form-panel" novalidate>
         <h2 class="form-section-heading">Report details</h2><div id="duplicate-message"></div><div id="form-error-summary" class="form-error-summary" tabindex="-1" role="alert" hidden></div>
         <div class="field" data-field="title"><label for="report-title">Short title</label><input id="report-title" name="title" maxlength="100" placeholder="Describe the concern, not who you blame" required aria-describedby="title-error"><p class="field-error" id="title-error">Enter a clear title between 8 and 100 characters.</p></div>
@@ -549,6 +588,7 @@
         <div id="traffic-fields" class="conditional-fields" hidden><div class="field" data-field="traffic-time"><label for="traffic-time">When did it occur?</label><input id="traffic-time" type="datetime-local"><p class="field-error" id="traffic-time-error">Add the approximate time or mark it unknown.</p><label class="check-field"><input id="traffic-time-unknown" type="checkbox"> Time unknown</label></div><div class="field" data-field="traffic-impact"><label for="traffic-impact">Reported impact</label><textarea id="traffic-impact" maxlength="500" placeholder="Describe observed delay, access issue, or diversion; avoid guessing the cause."></textarea><p class="field-error" id="traffic-impact-error">Describe the reported impact.</p></div><div class="field"><label for="traffic-source">Available supporting source <span class="optional">(optional)</span></label><input id="traffic-source" maxlength="250" placeholder="Public advisory, transit notice, or other source; do not speculate about individuals"></div></div>
         <div class="field" data-field="location"><label for="report-location">Bhopal locality</label><select id="report-location" name="location" required aria-describedby="location-error"><option value="">Choose a locality</option>${localities.map((locality) => `<option value="${escapeHtml(locality)}">${escapeHtml(locality)}</option>`).join("")}<option value="__manual">Enter locality manually</option></select><p class="field-error" id="location-error">Choose a locality or enter one manually below.</p></div>
         <div class="field" data-field="location-text"><label for="report-location-text">Street, landmark, or manual locality <span class="optional" id="location-text-optional">(optional)</span></label><input id="report-location-text" maxlength="120" placeholder="Type a landmark or, for manual entry, the locality name"><p class="field-hint">Typed location only. No GPS access; location is not verified. Never add a private home address.</p><p class="field-error" id="location-text-error">Enter the manual locality or keep location text under 120 characters.</p></div>
+        <div class="field"><label for="evidence-context">Evidence or source context <span class="optional">(optional)</span></label><textarea id="evidence-context" maxlength="500" placeholder="Describe what any attached image or public source shows. The model cannot view uploaded image contents."></textarea><p class="field-hint">Text-only consistency screening; do not include private records or personal contact details.</p></div>
         <section class="ai-assist-panel" aria-labelledby="ai-assist-title"><div><h3 id="ai-assist-title">Optional Gemma issue analysis</h3><p>On request, this sends the title, description, and locality above to Google’s configured Gemma API for an advisory suggestion. Google may process these fields under the applicable API terms. Do not include private or identifying information. It does not submit the report, change its status, or verify evidence.</p></div><button class="button button-secondary" type="button" id="analyze-issue">Analyze with Gemma</button><div id="ai-analysis-result" class="ai-analysis-result" role="status" aria-live="polite" hidden></div></section>
         <fieldset class="identity-choice"><legend>How should your report be attributed publicly?</legend>
           <label><input type="radio" name="identity-choice" value="display-name" checked><span><strong>Display my chosen name</strong><small>Only the name you enter below is shown on this report.</small></span></label>
@@ -558,18 +598,25 @@
         <div class="field" id="display-name-field"><label for="reporter-name">Chosen display name</label><input id="reporter-name" maxlength="40" autocomplete="nickname" placeholder="Name to show on the public report" required aria-describedby="reporter-name-error"><p class="field-error" id="reporter-name-error">Enter a display name or choose pseudonym/anonymous.</p></div>
         <div class="field"><label for="report-photo">Report photo <span class="optional">(optional)</span></label><label class="upload-zone" for="report-photo">${icon("upload")}<span><strong>Choose a photo</strong><small>JPG, PNG or WebP · up to 3 MB · re-encoded in this browser</small></span><input id="report-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp"><img id="photo-preview" class="photo-preview" alt="Selected report photo preview"></label></div>
         <div class="field"><label for="report-before-evidence">Before evidence <span class="optional">(optional)</span></label><label class="upload-zone" for="report-before-evidence">${icon("upload")}<span><strong>Select an image taken before reported work</strong><small>JPG, PNG or WebP · up to 3 MB · re-encoded in this browser</small></span><input id="report-before-evidence" type="file" accept="image/jpeg,image/png,image/webp"><img id="before-preview" class="photo-preview" alt="Before evidence image preview"></label><p class="field-hint">Only submit an image that relates to this report. Avoid faces, identity documents, license plates, student records, and private medical records. Metadata removal is best-effort.</p></div>
-        <label class="consent-check"><input id="report-consent" type="checkbox" required><span>I understand this browser prototype does not send the report to an authority, and my chosen public attribution will be visible to people using this browser.</span></label>
-        <div class="form-actions"><button class="button button-secondary" type="button" data-page="dashboard">Cancel</button><button id="report-submit" class="button button-primary" type="submit">Review report</button></div>
+        <div id="screening-submit-error" class="form-error-summary" role="alert" hidden></div>
+        <label class="consent-check"><input id="report-consent" type="checkbox" required><span>I understand my report text will be sent to the local Ollama screening service and stored in this browser and the local screening database. Reports are not sent to an authority or shared with other users.</span></label>
+        <div class="form-actions"><button class="button button-secondary" type="button" data-page="dashboard">Cancel</button><button id="report-submit" class="button button-primary" type="submit">Screen and submit</button></div>
       </form>
       <aside class="form-aside"><article class="content-card aside-card"><h3>Optional account access</h3><p>Secure sign-in is not configured in this prototype. No password or email is requested; you can still submit without creating an account.</p><button class="button button-secondary account-button" type="button" id="account-info">Account sign-in prototype</button></article>
-      <article class="content-card aside-card"><h3>Privacy in this prototype</h3><p>Your report and photo are stored in this browser's local storage and visible to users of this browser profile. The data remains until browser storage is cleared. There is no shared backend, access control, or secure anonymity guarantee.</p></article>
+      <article class="content-card aside-card"><h3>Privacy in this prototype</h3><p>Your report stays in this browser's local storage and its text is also saved to a SQLite file on this computer. Neither has production-grade access controls. Images are not stored by the screening database or sent to Ollama. No shared backend or secure anonymity guarantee exists.</p></article>
       <article class="content-card aside-card"><h3>Before you submit</h3><ul><li>Describe what you observed, not a presumed cause.</li><li>Fee changes are allegations unless independently documented.</li><li>Traffic concerns need time, location, impact, and any available public source.</li><li>Never post sensitive personal records.</li></ul></article></aside></div>`;
   }
 
   function confirmationPage() {
     const issue = issues.find((item) => item.id === reportSubmittedId);
     if (!issue) return "";
-    return `<section class="confirmation"><div class="confirmation-icon">${icon("checkCircle")}</div><p class="eyebrow">Saved in this browser</p><h1>Your report is ready to follow.</h1><p class="page-subtitle">This browser prototype saved your report. It has not been sent to a Bhopal authority or shared with another user.</p><div class="reference-box"><span>Reference ID</span><strong>${escapeHtml(issue.id)}</strong></div><p class="identity-confirmation">Public attribution: <strong>${issue.identityChoice === "anonymous" ? "Anonymous" : escapeHtml(issue.reporter)}</strong></p><div class="confirmation-actions"><button class="button button-primary" type="button" data-open-issue="${escapeHtml(issue.id)}">View report details ${icon("arrow")}</button><button class="button button-secondary" type="button" data-page="dashboard">Back to overview</button></div></section>`;
+    return `<section class="confirmation"><div class="confirmation-icon">${icon("checkCircle")}</div><p class="eyebrow">Local screening receipt · ${escapeHtml(issue.screening?.complaint_id || issue.id)}</p><h1>Report screening complete</h1><p class="page-subtitle">The report is stored in this browser and local screening database. It has not been sent to an authority or shared with other users.</p><div class="reference-box"><span>Screening status</span><strong>${escapeHtml(screeningStatusLabel(issue.screeningStatus))}</strong></div><p class="identity-confirmation">Public attribution: <strong>${issue.identityChoice === "anonymous" ? "Anonymous" : escapeHtml(issue.reporter)}</strong></p>${screeningPanelMarkup(issue)}<div class="confirmation-actions"><button class="button button-primary" type="button" data-open-issue="${escapeHtml(issue.id)}">View report details ${icon("arrow")}</button><button class="button button-secondary" type="button" data-page="my-submissions">My submissions</button><button class="button button-secondary" type="button" data-page="dashboard">Back to overview</button></div></section>`;
+  }
+
+  function mySubmissionsPage() {
+    const submissions = issues.filter((issue) => !issue.sample)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return `<section class="page-heading"><div><p class="eyebrow">Private to this browser profile</p><h1>My submissions</h1><p class="page-subtitle">Your locally saved reports and preliminary AI screening decisions. This is not a secure account or shared service.</p></div><button class="button button-primary" type="button" data-page="report">${icon("list")} Report an issue</button></section><div class="sample-note"><span>Held, unclear, rejected, and unscreened legacy records are not shown on the public dashboard. This browser-only list is visible to anyone with access to this browser profile.</span></div><section class="content-card list-card"><div class="list-card-head"><div><h2 class="section-title">Your local reports</h2><p class="section-caption">${submissions.length} locally stored submission(s)</p></div></div><div class="table-wrap">${submissions.length ? `<table class="issue-table"><thead><tr><th>Report</th><th>Category / topic</th><th>Locality</th><th>Report status</th><th>Screening decision</th><th>Reported</th></tr></thead><tbody>${submissions.map((issue) => `<tr data-open-issue="${escapeHtml(issue.id)}" tabindex="0" aria-label="Open ${escapeHtml(issue.title)}"><td><div class="issue-title">${escapeHtml(issue.title)}</div><div class="issue-ref">${escapeHtml(issue.id)}</div></td><td>${escapeHtml(issue.category)}<small class="topic-cell">${escapeHtml(issue.topic || "")}</small></td><td>${escapeHtml(issue.locality)}</td><td>${statusPill(issue.status)}</td><td>${escapeHtml(screeningStatusLabel(issue.screeningStatus))}${issue.screening?.human_review_required ? "<small class=\"topic-cell\">Human review required</small>" : ""}</td><td>${relativeAge(issue.createdAt)}</td></tr>`).join("")}</tbody></table>` : `<div class="empty-state"><strong>No submissions in this browser.</strong><span>Reports you submit will appear here after the local screening service processes them.</span><button class="button button-primary" type="button" data-page="report">Report an issue</button></div>`}</div></section>`;
   }
 
   function timelineMarkup(issue) {
@@ -635,13 +682,14 @@
 
   function render() {
     if (page === "details" && !issues.some((item) => item.id === selectedId)) { page = "dashboard"; selectedId = null; }
-    const pageNames = { dashboard: "Overview", localities: "Bhopal localities", trust: "Trust & transparency", report: "Report an issue", details: "Complaint details" };
+    const pageNames = { dashboard: "Overview", localities: "Bhopal localities", trust: "Trust & transparency", report: "Report an issue", "my-submissions": "My submissions", details: "Complaint details" };
     currentBreadcrumb.textContent = pageNames[page] || "Overview";
     document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === (page === "details" ? "dashboard" : page)));
     app.innerHTML = page === "dashboard" ? dashboardPage()
       : page === "localities" ? localityPage()
         : page === "trust" ? trustPage()
           : page === "report" ? reportPage()
+            : page === "my-submissions" ? mySubmissionsPage()
             : detailPage(issues.find((item) => item.id === selectedId));
     attachPageEvents();
     app.classList.remove("view-enter");
@@ -1049,6 +1097,9 @@
       document.getElementById("reporter-name").setAttribute("aria-invalid", String(nameInvalid));
       const consent = document.getElementById("report-consent").checked;
       const summary = document.getElementById("form-error-summary");
+      const screeningError = document.getElementById("screening-submit-error");
+      screeningError.hidden = true;
+      screeningError.textContent = "";
       if (photoProcessing) {
         toast("Wait for the selected image to finish processing.");
         return;
@@ -1075,11 +1126,12 @@
         feeEvidence: document.getElementById("fee-evidence").value.trim(),
         trafficTime: category === "Transport and traffic" ? (trafficTime || "Unknown") : "",
         trafficImpact: category === "Transport and traffic" ? trafficImpact : "",
-        trafficSource: document.getElementById("traffic-source").value.trim()
+        trafficSource: document.getElementById("traffic-source").value.trim(),
+        evidenceContext: document.getElementById("evidence-context").value.trim()
       };
       const duplicate = findPossibleDuplicate(title, category, resolvedLocality, topic);
       if (duplicate) { showDuplicatePrompt(duplicate); return; }
-      createReport(pendingReportValues);
+      screenAndCreateReport(pendingReportValues, form);
     });
   }
 
@@ -1105,11 +1157,64 @@
         toast("Report details need to be checked again before submission.");
         return;
       }
-      createReport(pendingReportValues);
+      screenAndCreateReport(pendingReportValues, document.getElementById("report-form"));
     });
   }
 
-  function createReport(values) {
+  async function screenAndCreateReport(values, form) {
+    if (!form || form.dataset.screening === "true") return;
+    const submitButton = document.getElementById("report-submit");
+    const errorRegion = document.getElementById("screening-submit-error");
+    const screeningPayload = {
+      title: values.title,
+      description: values.description,
+      category: values.category,
+      topic: values.topic,
+      locality: values.locality,
+      locationText: values.locationText,
+      allegation: values.allegation || "",
+      feeEvidence: values.feeEvidence || "",
+      trafficTime: values.trafficTime || "",
+      trafficImpact: values.trafficImpact || "",
+      trafficSource: values.trafficSource || "",
+      evidenceContext: values.evidenceContext || "",
+      photo: values.photo || "",
+      beforeEvidence: values.beforeEvidence || ""
+    };
+    form.dataset.screening = "true";
+    submitButton.disabled = true;
+    errorRegion.hidden = true;
+    try {
+      const response = await fetch("/api/submit-complaint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(screeningPayload),
+        signal: AbortSignal.timeout(90000)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "The local screening service could not accept this report.");
+      if (!payload.screening || !payload.complaint_id || !payload.receipt_token) {
+        throw new Error("The screening service returned an incomplete receipt. The report was not saved in this browser.");
+      }
+      createReport(values, {
+        ...payload.screening,
+        complaint_id: payload.complaint_id,
+        receipt_token: payload.receipt_token
+      });
+    } catch (error) {
+      const cannotConnect = error instanceof TypeError || error.name === "TimeoutError";
+      errorRegion.textContent = cannotConnect
+        ? `Cannot reach the local screening service at ${new URL("/api/submit-complaint", window.location.href).href}. Start Ollama and JanPramaan with the commands in README, then submit again. Your report has not been saved.`
+        : `${error.message || "Screening failed."} Your report has not been saved; review the error and try again.`;
+      errorRegion.hidden = false;
+      errorRegion.focus();
+    } finally {
+      form.dataset.screening = "false";
+      submitButton.disabled = false;
+    }
+  }
+
+  function createReport(values, screening) {
     const timestamp = new Date().toISOString();
     const id = `JP-BPL-${Date.now().toString(36).toUpperCase()}`;
     const displayName = values.identityChoice === "anonymous"
@@ -1124,6 +1229,12 @@
       city: "Bhopal, Madhya Pradesh",
       status: "Reported", statusCode: "reported", supports: 0, createdAt: timestamp,
       sample: false, identityChoice: values.identityChoice, reporter: displayName,
+      screeningStatus: screening.status,
+      screening: {
+        ...screening,
+        complaint_id: screening.complaint_id,
+        receipt_token: screening.receipt_token
+      },
       allegation: values.allegation, feeEvidence: values.feeEvidence,
       trafficTime: values.trafficTime, trafficImpact: values.trafficImpact,
       trafficSource: values.trafficSource, photo: values.photo,
@@ -1143,6 +1254,58 @@
     pendingBeforeEvidence = "";
     render();
     window.scrollTo({ top: 0, behavior: scrollBehavior() });
+  }
+
+  async function submitScreeningCorrection(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const issue = issues.find((item) => item.id === reportSubmittedId)
+      || issues.find((item) => item.screening?.complaint_id === form.dataset.complaintId);
+    const correction = document.getElementById("screening-correction").value.trim();
+    const button = form.querySelector('button[type="submit"]');
+    if (!issue?.screening?.receipt_token || correction.length < 10 || correction.length > 2000) {
+      toast("A private receipt and a correction of 10 to 2000 characters are required.");
+      return;
+    }
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/complaints/${encodeURIComponent(issue.screening.complaint_id)}/correction`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Report-Receipt": issue.screening.receipt_token
+        },
+        body: JSON.stringify({ correction }),
+        signal: AbortSignal.timeout(90000)
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "The correction could not be screened.");
+      const updated = {
+        ...issue,
+        description: `${issue.description}\n\nReporter correction: ${correction}`,
+        screeningStatus: payload.screening.status,
+        screening: {
+          ...payload.screening,
+          complaint_id: issue.screening.complaint_id,
+          receipt_token: issue.screening.receipt_token
+        },
+        updates: [...issue.updates, {
+          status: issue.status,
+          note: "Reporter submitted additional information for AI-assisted preliminary screening; no human review is recorded.",
+          at: new Date().toISOString(),
+          actor: "Reporter"
+        }]
+      };
+      const nextIssues = issues.map((item) => item.id === issue.id ? updated : item);
+      if (commitIssues(nextIssues, "Correction recorded and screened. This is not a human review.")) {
+        render();
+        window.scrollTo({ top: 0, behavior: scrollBehavior() });
+      }
+    } catch (error) {
+      toast(error.message || "The local screening service could not receive the correction.");
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
   }
 
   function addHistory(issueId, update, transform) {

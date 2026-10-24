@@ -1,5 +1,7 @@
 import json
 import os
+import re
+import sqlite3
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -9,6 +11,7 @@ from gemma_service import MODEL_NAME, GemmaServiceError, analyze_issue
 
 ROOT = Path(__file__).resolve().parent
 MAX_REQUEST_BYTES = 16_384
+MAX_SCREENING_REQUEST_BYTES = 12 * 1024 * 1024
 STATIC_FILES = {"", "index.html", "app.js", "styles.css"}
 
 def load_local_settings():
@@ -16,7 +19,7 @@ def load_local_settings():
     if not env_path.is_file():
         return
 
-    supported_settings = {"GOOGLE_API_KEY", "JANPRAMAAN_HOST", "JANPRAMAAN_PORT"}
+    supported_settings = {"GOOGLE_API_KEY", "OLLAMA_MODEL", "JANPRAMAAN_HOST", "JANPRAMAAN_PORT"}
     for line in env_path.read_text(encoding="utf-8").splitlines():
         key, separator, value = line.partition("=")
         key = key.strip()
@@ -29,6 +32,21 @@ def load_local_settings():
 
 
 load_local_settings()
+
+from screening import (
+    OLLAMA_MODEL,
+    RequestRateLimiter,
+    ScreeningError,
+    ScreeningStore,
+    clean_correction,
+    ollama_model_available,
+    public_screening_summary,
+    screen_complaint,
+    validate_complaint,
+)
+
+SCREENING_STORE = ScreeningStore(ROOT / "data" / "screening.sqlite3")
+SCREENING_RATE_LIMITER = RequestRateLimiter()
 
 
 def validate_issue_payload(payload):
@@ -88,6 +106,9 @@ class JanPramaanHandler(SimpleHTTPRequestHandler):
                     "status": "ok",
                     "service": "JanPramaan API",
                     "model": MODEL_NAME,
+                    "screening_model": OLLAMA_MODEL,
+                    "screening_endpoint": "/api/submit-complaint",
+                    "ollama_available": ollama_model_available(),
                     "api_key_configured": bool(os.getenv("GOOGLE_API_KEY", "").strip()),
                 },
             )
@@ -99,6 +120,13 @@ class JanPramaanHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         route = urlsplit(self.path).path
+        if route == "/api/submit-complaint":
+            self._handle_complaint_submission()
+            return
+        correction_match = re.fullmatch(r"/api/complaints/(JPS-[A-F0-9]{12})/correction", route)
+        if correction_match:
+            self._handle_correction(correction_match.group(1))
+            return
         if route != "/api/analyze-issue":
             self._send_json(404, {"error": "API route not found."})
             return
@@ -135,6 +163,126 @@ class JanPramaanHandler(SimpleHTTPRequestHandler):
             return
 
         self._send_json(200, {"analysis": result, "advisory_only": True})
+
+    def _read_json_body(self, max_bytes: int):
+        if self.headers.get_content_type() != "application/json":
+            self._send_json(415, {"error": "Content-Type must be application/json."})
+            return None
+        try:
+            content_length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            self._send_json(400, {"error": "A valid Content-Length header is required."})
+            return None
+        if content_length < 1 or content_length > max_bytes:
+            self._send_json(413, {"error": "Request body is empty or exceeds the permitted size."})
+            return None
+        try:
+            return json.loads(self.rfile.read(content_length))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self._send_json(400, {"error": "Request body must contain valid JSON."})
+            return None
+
+    def _allow_screening_request(self) -> bool:
+        client_ip = self.client_address[0]
+        if SCREENING_RATE_LIMITER.allow(client_ip):
+            return True
+        self._send_json(429, {"error": "Too many screening requests. Please try again later."})
+        return False
+
+    def _handle_complaint_submission(self):
+        if not self._allow_screening_request():
+            return
+        payload = self._read_json_body(MAX_SCREENING_REQUEST_BYTES)
+        if payload is None:
+            return
+        try:
+            complaint, uploads = validate_complaint(payload)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        except ScreeningError as exc:
+            self._send_json(exc.status_code, {"error": str(exc)})
+            return
+        try:
+            assessment, status, human_review_required = screen_complaint(
+                complaint, uploads, SCREENING_STORE
+            )
+            complaint_id, receipt_token = SCREENING_STORE.store_screening(
+                complaint,
+                assessment,
+                status,
+                human_review_required,
+                OLLAMA_MODEL,
+            )
+        except ScreeningError as exc:
+            self._send_json(exc.status_code, {"error": str(exc)})
+            return
+        except sqlite3.Error:
+            self._send_json(503, {"error": "The local screening record could not be saved. No report was accepted."})
+            return
+
+        self._send_json(
+            201,
+            {
+                "complaint_id": complaint_id,
+                "receipt_token": receipt_token,
+                "screening": public_screening_summary(assessment, status, human_review_required),
+            },
+        )
+
+    def _handle_correction(self, complaint_id: str):
+        if not self._allow_screening_request():
+            return
+        receipt_token = self.headers.get("X-Report-Receipt", "")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{40,60}", receipt_token):
+            self._send_json(401, {"error": "A valid private report receipt is required."})
+            return
+        payload = self._read_json_body(8_192)
+        if payload is None:
+            return
+        if not isinstance(payload, dict) or set(payload) != {"correction"}:
+            self._send_json(400, {"error": "Submit a correction using the correction field."})
+            return
+        try:
+            correction = clean_correction(payload["correction"])
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+            return
+        complaint = SCREENING_STORE.get_complaint(complaint_id)
+        if complaint is None or not SCREENING_STORE.has_valid_receipt(complaint_id, receipt_token):
+            self._send_json(404, {"error": "The report or its private receipt could not be found."})
+            return
+        try:
+            assessment, status, human_review_required = screen_complaint(
+                complaint | {"description": f"{complaint['description']}\n\nReporter correction: {correction}"},
+                {
+                    "photo": {"provided": complaint["photo_present"]},
+                    "beforeEvidence": {"provided": complaint["before_evidence_present"]},
+                },
+                SCREENING_STORE,
+            )
+            if not SCREENING_STORE.store_correction(
+                complaint_id,
+                receipt_token,
+                correction,
+                assessment,
+                status,
+                human_review_required,
+                OLLAMA_MODEL,
+            ):
+                self._send_json(401, {"error": "A valid private report receipt is required."})
+                return
+        except ScreeningError as exc:
+            self._send_json(exc.status_code, {"error": str(exc)})
+            return
+        except sqlite3.Error:
+            self._send_json(503, {"error": "The correction could not be saved. Please try again later."})
+            return
+
+        self._send_json(
+            200,
+            {"screening": public_screening_summary(assessment, status, human_review_required)},
+        )
 
     def _send_json(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

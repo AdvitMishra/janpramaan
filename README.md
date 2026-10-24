@@ -1,6 +1,6 @@
 # JanPramaan — Every Voice. Accountable Action.
 
-JanPramaan is an independent civic-reporting prototype focused on Bhopal, Madhya Pradesh. It is not an official government portal. The existing report workflow remains plain HTML, CSS, and JavaScript with browser-local report storage. A small Python server serves the site and exposes an optional advisory Gemma API; it is not a shared report database or authority integration.
+JanPramaan is an independent civic-reporting prototype focused on Bhopal, Madhya Pradesh. It is not an official government portal. The frontend remains plain HTML, CSS, and JavaScript. A local Python server serves the site and screens report submissions using the configured local Ollama model. It is not a shared report database, secure moderation service, or authority integration.
 
 ## What works in this prototype
 
@@ -17,22 +17,31 @@ JanPramaan is an independent civic-reporting prototype focused on Bhopal, Madhya
 - Trust & Transparency page explains record sources, authority connectivity, privacy, limitations, and moderation policy.
 - Optional Gemma analysis sends only the entered title, description, and locality to the configured Google Gen AI service after the user presses its button. Its category, priority, summary, and suggested action are advisory only and never change report data or status.
 - Python API provides `GET /api/health` and `POST /api/analyze-issue`. The model call uses Google's `google-genai` SDK and requests the exact model ID `gemma-4-26b-a4b-it`; it does not substitute a Gemini model. A configured key does not guarantee that Google currently exposes this exact model through the API key endpoint.
+- New report submissions call `POST /api/submit-complaint` on the same origin before being saved in browser storage. The server validates fields and JPEG/PNG/WebP signatures, size, and decoded dimensions, then screens report text with the local Ollama chat API using `OLLAMA_MODEL` (default `hackathon-agent`). Uploaded image bytes are not sent to Ollama; an image attachment requires human review because its contents are not inspected.
+- Model output is validated against a JSON schema. Deterministic publication rules keep reports with sensitive content, a suspected personal dispute, spam, inconsistent evidence, unclear civic relevance, missing required context, or unreviewed media off the dashboard. A repeated identical title/description/locality is held. A missing optional photo alone is not a reason to reject or hold a report.
+- Screening statuses are stored separately from complaint text in a local SQLite database. Passing the configured local policy sets `approved_for_publication`; otherwise the item remains private to the submitter's local browser and appears under **My submissions** with correction/appeal access. A preliminary AI assessment is not a human review or a truth finding.
 
 ## Data, privacy, and limitations
 
-- The Python API serves the site and handles optional Gemma analysis only; it is not a shared report backend. There is no secure authentication, shared report database, authority integration, moderator service, or independent evidence-review service.
+- The local Python API and SQLite database are a development prototype, not production storage. The server binds to loopback by default and has no secure accounts, role-based reviewer console, encrypted evidence storage, shared public API, human moderation, or authority integration. Anyone with access to the machine or the same browser profile may access stored data.
 - Fictional sample records are individually labeled and are examples only—not real Bhopal complaints, statistics, authority actions, or verified outcomes.
-- User reports, optional photos, support, and status updates are stored in the current browser's local storage. Anyone with access to that browser profile may see them; they are not sent to other users or authorities. Storage remains until browser data is cleared. Browser storage is not a secure or durable records system.
+- User reports, optional photos, support, and status updates are stored in browser `localStorage`; report text and screening results are also stored in separate SQLite tables in `data\screening.sqlite3`. Uploaded image bytes are not saved by the screening database. The API does not provide a public list endpoint, but local files/browser data are not protected by production access controls or encrypted storage. Storage has no retention/deletion policy.
 - A chosen display name is public within the local report view. Pseudonyms are generated locally. Anonymous mode does not store or show a reporter name or email, but does not promise technical untraceability.
 - Image re-encoding removes common metadata in ordinary cases but is not a forensic privacy guarantee. Avoid uploading faces, identity documents, student records, or private medical records.
 - The prototype cannot create a genuine Verified Resolved outcome. Legacy user records previously marked verified are migrated back to Verification Pending. Only the current explicitly simulated sample records contribute verified demo counts.
 - Before/after uploads and their audit labels are stored in local storage, not in secure evidence storage. Image payloads may exceed browser storage quotas; failed saves surface an error and do not pretend to succeed. Before images are never substituted with placeholders; absent evidence is stated explicitly.
-- Corrections append to history; duplicate suggestions do not merge records; disputes remain visible. Flags are local only and are not reviewed by a moderator.
+- Corrections and appeals are recorded in the local screening database and re-screened; this is not a human appeal decision. Duplicate submissions are held for review, not silently merged. Flags are local only and are not reviewed by a moderator. Rate limiting is in-memory and only protects this single local server process.
 - There is no configured retention period or secure deletion service. Clear this browser's site data to remove its stored reports; this also clears other local JanPramaan records.
 
 ## Running
 
-Use PowerShell from the project folder. Create and activate a virtual environment, then install the API dependencies:
+Use PowerShell from the project folder. Ensure Ollama is running and the `hackathon-agent:latest` model exists (`ollama list`). If needed, recreate this local model from the included Modelfile, which uses the installed `gemma4` base:
+
+```powershell
+ollama create hackathon-agent -f .\Modelfile
+```
+
+Create and activate a virtual environment, then install the dependencies:
 
 ```powershell
 Set-Location 'C:\Users\Advit Mishra\OneDrive\Documents\hackathon-agent'
@@ -42,23 +51,25 @@ python -m pip install -r requirements.txt
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 ```
 
-Put your Google API key in the ignored local `.env` file as `GOOGLE_API_KEY=your_key` (or set that environment variable in the server process). Do not commit or paste the key into frontend files. Start the combined frontend/API server:
+Set `OLLAMA_MODEL=hackathon-agent` in the ignored `.env` file (or keep the default). The separate optional Google Gemma analysis button still needs `GOOGLE_API_KEY`; that key is not used by the screening pipeline. Do not place keys in frontend code. Start the combined frontend/API server:
 
 ```powershell
 python server.py
 ```
 
-Open `http://127.0.0.1:8765` (not a separate Live Server port or `file://` URL, because the browser request is same-origin). The health endpoint is `http://127.0.0.1:8765/api/health`. Example API call from another PowerShell window:
+Open `http://127.0.0.1:8765` (not a separate Live Server port or `file://`, because submission calls are same-origin). Health reports whether Ollama and the configured model tag are reachable at `http://127.0.0.1:8765/api/health`. The report form calls the screening endpoint itself. For a direct local test:
 
 ```powershell
-Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/analyze-issue' -Method Post -ContentType 'application/json' -Body (@{
-  title = 'Damaged footpath needs attention'
-  description = 'A section of the footpath is broken and difficult to use safely.'
+Invoke-RestMethod -Uri 'http://127.0.0.1:8765/api/submit-complaint' -Method Post -ContentType 'application/json' -Body (@{
+  title = 'Pothole on public road'
+  description = 'A deep pothole is affecting traffic on a public road near Arera Colony.'
+  category = 'Roads and infrastructure'
+  topic = 'Pothole'
   locality = 'Arera Colony'
 } | ConvertTo-Json)
 ```
 
-If `GOOGLE_API_KEY` is not configured, health still works and analysis returns an explicit configuration error. A successful health check does not imply model access. The current browser-local report store is unchanged; AI requests are not saved as reports.
+If Ollama or the model is unavailable, the endpoint returns a safe service error and does not save a successful submission. The current Google `/api/analyze-issue` endpoint is separate and optional.
 
 Run the API checks with:
 
@@ -66,4 +77,4 @@ Run the API checks with:
 python -m unittest discover -s tests -v
 ```
 
-For a production deployment, replace browser storage with a protected shared reports backend, add role-based authorization, secure authentication, moderation and appeal workflows, an auditable evidence-review process, an explicit retention policy, and an approved integration before presenting reports to any authority as delivered. The API key enables Google model requests but does not implement secure accounts, private report storage, or independent verification.
+This is not production-ready. Production requires authenticated reporter/reviewer identities, access-controlled and encrypted complaint/evidence storage, a real human review and appeal queue, shared report APIs, durable audit/retention/deletion controls, malware/image scanning, distributed rate limits, CSRF protection for authenticated operations, and security testing. No report is delivered to an authority and no screening result verifies the reported facts or a resolution.

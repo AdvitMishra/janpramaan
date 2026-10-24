@@ -76,9 +76,17 @@ Reported locality: {locality}
 
     try:
         from google import genai
+        from google.genai import types
 
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=MODEL_NAME, contents=prompt)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0,
+            ),
+        )
     except ImportError as exc:
         raise GemmaServiceError(
             "Gemma analysis dependencies are missing. Install requirements.txt and restart the server."
