@@ -1,11 +1,17 @@
 import base64
+import json
 import tempfile
+import threading
 import unittest
+from http.client import HTTPConnection
+from http.server import ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 from PIL import Image
 
+import server
 from screening import (
     RequestRateLimiter,
     ScreeningError,
@@ -70,6 +76,20 @@ class ScreeningValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no larger than 3 MB"):
             _data_url_info("data:image/png;base64," + ("A" * (4_200_000)), "Report photo")
 
+    def test_accepts_jpeg_png_and_webp_content(self):
+        for image_format, mime_type in (
+            ("JPEG", "image/jpeg"),
+            ("PNG", "image/png"),
+            ("WEBP", "image/webp"),
+        ):
+            with self.subTest(image_format=image_format):
+                image_buffer = BytesIO()
+                Image.new("RGB", (2, 2), "white").save(image_buffer, format=image_format)
+                encoded = base64.b64encode(image_buffer.getvalue()).decode()
+                result = _data_url_info(f"data:{mime_type};base64,{encoded}", "Report photo")
+                self.assertTrue(result["provided"])
+                self.assertEqual(result["content_type"], mime_type)
+
     def test_schema_rejects_wrong_types_and_extra_fields(self):
         with self.assertRaises(ScreeningError):
             validate_screening_result(screening_result(potential_spam="false"))
@@ -119,6 +139,11 @@ class PublicationPolicyTests(unittest.TestCase):
             classify_publication(screening_result(), image_upload),
             ("held_for_moderation", True),
         )
+        before_upload = {"photo": {"provided": False}, "beforeEvidence": {"provided": True}}
+        self.assertEqual(
+            classify_publication(screening_result(), before_upload),
+            ("held_for_moderation", True),
+        )
 
     def test_identical_repeat_is_held_without_calling_model(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -159,6 +184,87 @@ class PublicationPolicyTests(unittest.TestCase):
         self.assertTrue(limiter.allow("local"))
         self.assertTrue(limiter.allow("local"))
         self.assertFalse(limiter.allow("local"))
+
+
+class ScreeningApiTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.store = ScreeningStore(Path(self.temp_dir.name) / "screening.sqlite3")
+        self.store_patch = patch("server.SCREENING_STORE", self.store)
+        self.rate_limiter_patch = patch(
+            "server.SCREENING_RATE_LIMITER",
+            RequestRateLimiter(max_requests=10, window_seconds=60),
+        )
+        self.store_patch.start()
+        self.rate_limiter_patch.start()
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.JanPramaanHandler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2)
+        self.rate_limiter_patch.stop()
+        self.store_patch.stop()
+        self.temp_dir.cleanup()
+
+    def request(self, method, path, payload=None, headers=None):
+        connection = HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=5)
+        body = None if payload is None else json.dumps(payload).encode()
+        request_headers = dict(headers or {})
+        if body is not None:
+            request_headers.setdefault("Content-Type", "application/json")
+        connection.request(method, path, body=body, headers=request_headers)
+        response = connection.getresponse()
+        result = response.status, response.read()
+        connection.close()
+        return result
+
+    def test_invalid_complaint_is_rejected_before_model_call(self):
+        with patch("server.screen_complaint") as screen:
+            status, body = self.request(
+                "POST",
+                "/api/submit-complaint",
+                complaint_payload(title="short"),
+            )
+        self.assertEqual(status, 400)
+        self.assertIn(b"Title must be between", body)
+        screen.assert_not_called()
+
+    def test_submission_and_receipt_protected_correction_route(self):
+        with patch(
+            "server.screen_complaint",
+            return_value=(screening_result(), "needs_clarification", True),
+        ):
+            status, body = self.request(
+                "POST",
+                "/api/submit-complaint",
+                complaint_payload(),
+            )
+        self.assertEqual(status, 201)
+        response = json.loads(body)
+        self.assertEqual(response["screening"]["status"], "needs_clarification")
+        self.assertNotIn(b"Pothole on public road", body)
+
+        with patch(
+            "server.screen_complaint",
+            return_value=(screening_result(), "pending_review", True),
+        ):
+            correction_status, correction_body = self.request(
+                "POST",
+                f"/api/complaints/{response['complaint_id']}/correction",
+                {"correction": "The affected location is beside the public market entrance."},
+                {"X-Report-Receipt": response["receipt_token"]},
+            )
+        self.assertEqual(correction_status, 200)
+        self.assertEqual(
+            json.loads(correction_body)["screening"]["status"],
+            "pending_review",
+        )
+        with self.store._connect() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM corrections").fetchone()[0], 1)
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM screenings").fetchone()[0], 2)
 
 
 if __name__ == "__main__":
