@@ -76,9 +76,19 @@ class ScreeningValidationTests(unittest.TestCase):
         with self.assertRaises(ScreeningError):
             validate_analysis_result(analysis_result(is_civic_issue="true"))
         with self.assertRaises(ScreeningError):
-            validate_analysis_result(
-                analysis_result(civic_relevance="out_of_scope", recommended_action="continue")
+            validate_analysis_result(analysis_result(is_civic_issue=True, civic_relevance="out_of_scope"))
+        normalized = validate_analysis_result(
+            analysis_result(recommended_action="block_publication")
+        )
+        self.assertEqual(normalized["recommended_action"], "hold_for_review")
+        normalized = validate_analysis_result(
+            analysis_result(
+                is_civic_issue=False,
+                civic_relevance="out_of_scope",
+                recommended_action="continue",
             )
+        )
+        self.assertEqual(normalized["recommended_action"], "block_publication")
 
     def test_backend_categories_and_topics_match_existing_report_form(self):
         frontend = (Path(server.ROOT) / "app.js").read_text(encoding="utf-8")

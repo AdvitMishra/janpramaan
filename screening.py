@@ -470,16 +470,25 @@ def validate_analysis_result(value: Any) -> dict[str, Any]:
         "relevant", "unclear", "out_of_scope"
     }:
         raise ScreeningError("The local analysis model returned an invalid response.", 502)
-    if (value["civic_relevance"] == "relevant") != value["is_civic_issue"]:
+    if (
+        value["civic_relevance"] == "relevant" and not value["is_civic_issue"]
+    ) or (
+        value["civic_relevance"] == "out_of_scope" and value["is_civic_issue"]
+    ):
         raise ScreeningError("The local analysis model returned an inconsistent civic assessment.", 502)
     if not isinstance(value["recommended_action"], str) or value["recommended_action"] not in {
         "continue", "request_clarification", "hold_for_review", "block_publication"
     }:
         raise ScreeningError("The local analysis model returned an invalid response.", 502)
-    if value["civic_relevance"] == "out_of_scope" and value["recommended_action"] != "block_publication":
-        raise ScreeningError("The local analysis model returned an inconsistent publication action.", 502)
-    if value["civic_relevance"] != "out_of_scope" and value["recommended_action"] == "block_publication":
-        raise ScreeningError("The local analysis model returned an inconsistent publication action.", 502)
+    recommended_action = value["recommended_action"]
+    if value["civic_relevance"] == "out_of_scope":
+        recommended_action = "block_publication"
+    elif value["civic_relevance"] == "unclear" and recommended_action in {
+        "continue", "block_publication"
+    }:
+        recommended_action = "request_clarification"
+    elif value["civic_relevance"] == "relevant" and recommended_action == "block_publication":
+        recommended_action = "hold_for_review"
     if not isinstance(value["priority"], str) or value["priority"] not in PRIORITY_LEVELS:
         raise ScreeningError("The local analysis model returned an invalid priority.", 502)
     reason = value["reason"]
@@ -494,6 +503,7 @@ def validate_analysis_result(value: Any) -> dict[str, Any]:
         **value,
         "reason": reason.strip(),
         "missing_information": [item.strip() for item in missing],
+        "recommended_action": recommended_action,
     }
 
 

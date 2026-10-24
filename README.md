@@ -34,6 +34,18 @@ JanPramaan is an independent civic-reporting prototype focused on Bhopal, Madhya
 - Corrections and appeals are recorded in the local screening database and re-screened; this is not a human appeal decision. Duplicate submissions are held for review, not silently merged. Flags are local only and are not reviewed by a moderator. Rate limiting is in-memory and only protects this single local server process.
 - There is no configured retention period or secure deletion service. Clear this browser's site data to remove its stored reports; this also clears other local JanPramaan records.
 
+## Deploy the static frontend to Vercel
+
+The Vercel configuration explicitly builds only the root-level `index.html`, `styles.css`, `app.js`, and `assets/` files with `@vercel/static`. This prevents Vercel from treating the root-level Python `server.py` as a function. The `.vercelignore` allowlist also excludes the Python backend, tests, local database, and environment files from the deployment; those files remain in the repository for separate backend hosting and local testing.
+
+Import `AdvitMishra/janpramaan` into Vercel with the repository root as the Root Directory. The included `vercel.json` uses explicit static build targets; no package installation or frontend build is required. Push the deployment changes to the branch connected to Vercel to trigger a deployment, or deploy from this folder with the Vercel CLI:
+
+```powershell
+npx vercel --prod
+```
+
+This deploys only the frontend, not the Python API. The frontend's analysis, screening, and correction requests use relative `/api/...` URLs, so they will not work on the Vercel domain until the Python backend is separately hosted and the frontend is configured to call that service. No API responses are mocked, and no API key should be added to frontend code or the Vercel static deployment.
+
 ## Running
 
 Use PowerShell from the project folder. Ensure Ollama is running and the `hackathon-agent:latest` model exists (`ollama list`). If needed, recreate this local model from the included Modelfile, which uses the installed `gemma4` base:

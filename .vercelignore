@@ -1,0 +1,7 @@
+*
+!index.html
+!app.js
+!styles.css
+!vercel.json
+!assets/
+!assets/**
