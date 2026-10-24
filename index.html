@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f7f4" />
+    <meta name="description" content="JanPramaan is an independent Bhopal civic-reporting prototype. Every Voice. Accountable Action. Not an official government portal." />
+    <meta name="application-name" content="JanPramaan" />
+    <title>JanPramaan — Every Voice. Accountable Action.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Main navigation">
+        <a class="brand" href="#" data-page="dashboard" aria-label="JanPramaan dashboard">
+          <img class="brand-logo" src="assets/janpramaan-logo.png" alt="JanPramaan logo" />
+        </a>
+
+        <div class="nav-label">WORKSPACE</div>
+        <nav class="primary-nav">
+          <button class="nav-item active" type="button" data-page="dashboard">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>
+            <span>Overview</span>
+          </button>
+          <button class="nav-item" type="button" data-page="localities">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3.5 6 6-2.5 5 2.5 6-2.5v14l-6 2.5-5-2.5-6 2.5V6Z"/><path d="M9.5 3.5v14M14.5 6v14"/></svg>
+            <span>Locality view</span>
+          </button>
+          <button class="nav-item" type="button" data-page="trust">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/></svg>
+            <span>Trust &amp; transparency</span>
+          </button>
+          <button class="nav-item" type="button" data-page="report">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span>Report an issue</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="profile-row">
+            <div class="avatar">JP</div>
+            <div><strong>Guest reporter</strong><small>No account required</small></div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="main-column">
+        <header class="topbar">
+          <div class="breadcrumbs"><span>Community</span><span class="crumb-divider">/</span><strong id="breadcrumb-current">Overview</strong></div>
+          <div class="topbar-actions">
+            <span class="demo-pill"><span class="demo-indicator"></span> No authority connection</span>
+            <button class="icon-button" id="help-button" type="button" aria-label="About JanPramaan">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.2 1.8c-1.1 1-1.8 1.3-1.8 2.7M12 17.2h.01"/></svg>
+            </button>
+          </div>
+        </header>
+
+        <main id="main-content" tabindex="-1">
+          <div id="app"></div>
+        </main>
+        <footer class="site-footer">
+          <span>JanPramaan · Every Voice. Accountable Action.</span>
+          <span>Independent prototype · Not an official government portal · No authority integration.</span>
+        </footer>
+      </div>
+    </div>
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <dialog id="account-dialog" class="account-dialog" aria-labelledby="account-dialog-title">
+      <div class="account-dialog-content">
+        <p class="eyebrow">Optional account access</p>
+        <h2 id="account-dialog-title">Account prototype</h2>
+        <p>Choose an account path to see its current availability. Secure sign-in and account creation are not connected. Do not enter credentials; none are requested or stored.</p>
+        <div class="account-dialog-actions">
+          <button id="account-signin" class="button button-secondary" type="button">Sign-in option</button>
+          <button id="account-create" class="button button-secondary" type="button">Create-account option</button>
+        </div>
+        <p id="account-dialog-status" class="account-dialog-status" role="status">Reports can still be submitted without an account.</p>
+        <form method="dialog"><button class="button button-primary" type="submit">Close</button></form>
+      </div>
+    </dialog>
+    <script src="app.js"></script>
+  </body>
+</html>
